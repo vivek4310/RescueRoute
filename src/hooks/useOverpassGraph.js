@@ -21,6 +21,88 @@ export function nearestNode(nodeList, lat, lon) {
   return best;
 }
 
+// ─── Edge-projection snap ─────────────────────────────────────────────────────
+// Projects the click point onto every edge whose endpoints are within
+// CANDIDATE_RADIUS metres, then snaps to whichever endpoint of the closest
+// edge projection is nearer to the click. This beats pure nearest-node when
+// the graph is dense: the geometrically closest node may sit on a parallel
+// street, but the projected edge finds the correct one on the clicked street.
+
+const CANDIDATE_RADIUS_M = 80; // only consider edges whose nodes are this close
+
+// Flat-earth projection of (lat,lon) relative to an origin — good enough for
+// distances <1 km and avoids full haversine in the tight inner loop.
+function toXY(lat, lon, originLat, originLon) {
+  const DEG = Math.PI / 180;
+  const x = (lon - originLon) * DEG * 6371000 * Math.cos(originLat * DEG);
+  const y = (lat - originLat) * DEG * 6371000;
+  return { x, y };
+}
+
+// Squared distance from point P to line-segment AB, returns { t, distSq }
+// where t ∈ [0,1] is the parameter of the closest point on the segment.
+function pointToSegmentDistSq(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return { t: 0, distSq: (px - ax) ** 2 + (py - ay) ** 2 };
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+  return {
+    t,
+    distSq: (px - (ax + t * dx)) ** 2 + (py - (ay + t * dy)) ** 2,
+  };
+}
+
+// Main export used by the hook — replaces the old single-call nearestNode.
+export function snapToNearestEdge(nodeList, edges, lat, lon) {
+  // Step 1: find the nearest node as a seed (limits candidate search radius).
+  const seed = nearestNode(nodeList, lat, lon);
+  if (!seed) return null;
+
+  // Step 2: collect all nodes within CANDIDATE_RADIUS of the click.
+  const candidateIds = new Set();
+  for (const n of nodeList) {
+    if (haversine(lat, lon, n.lat, n.lon) <= CANDIDATE_RADIUS_M) {
+      candidateIds.add(n.id);
+    }
+  }
+  // Always keep the seed so we have at least one result.
+  candidateIds.add(seed.id);
+
+  // Step 3: project the click onto every edge that has both endpoints in the
+  // candidate set, track the edge with the smallest perpendicular distance.
+
+  // Build id→node map for candidates only (tiny subset of 159k).
+  const candidateMap = {};
+  for (const n of nodeList) {
+    if (candidateIds.has(n.id)) candidateMap[n.id] = n;
+  }
+
+  let bestDistSq = Infinity;
+  let bestEdge = null;
+
+  for (const e of edges) {
+    const na = candidateMap[e.from], nb = candidateMap[e.to];
+    if (!na || !nb) continue;
+
+    const { x: ax, y: ay } = toXY(na.lat, na.lon, lat, lon);
+    const { x: bx, y: by } = toXY(nb.lat, nb.lon, lat, lon);
+    const { distSq } = pointToSegmentDistSq(0, 0, ax, ay, bx, by);
+
+    if (distSq < bestDistSq) {
+      bestDistSq = distSq;
+      bestEdge = { na, nb };
+    }
+  }
+
+  // Step 4: of the two endpoints of the best edge, return the one closer to
+  // the click. Falls back to seed if no edge was found (isolated node).
+  if (!bestEdge) return seed;
+
+  const dA = haversine(lat, lon, bestEdge.na.lat, bestEdge.na.lon);
+  const dB = haversine(lat, lon, bestEdge.nb.lat, bestEdge.nb.lon);
+  return dA <= dB ? bestEdge.na : bestEdge.nb;
+}
+
 // Road type → base cost multiplier (lower = faster road)
 function roadWeight(highway) {
   return {
@@ -96,6 +178,8 @@ export function useOverpassGraph() {
   const [errorMsg, setErrorMsg]      = useState('');
   const [nodeCount, setNodeCount]    = useState(0);
   const [edgeCount, setEdgeCount]    = useState(0);
+  // Keep edges in a ref — they're large and never need to trigger re-renders.
+  const edgesRef = useRef([]);
 
   // Obstacle state
   const [blockedNodes, setBlockedNodes] = useState(new Set());
@@ -113,6 +197,7 @@ export function useOverpassGraph() {
       setNodeList(graph.nodeList);
       setNodeCount(graph.nodeList.length);
       setEdgeCount(graph.edges.length);
+      edgesRef.current = graph.edges;
       setLoadState('loaded');
     } catch (err) {
       setErrorMsg(err.message);
@@ -158,7 +243,7 @@ export function useOverpassGraph() {
   }, []);
 
   const snapToNearest = useCallback((lat, lon) => {
-    return nearestNode(nodeList, lat, lon);
+    return snapToNearestEdge(nodeList, edgesRef.current, lat, lon);
   }, [nodeList]);
 
   return {
