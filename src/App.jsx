@@ -24,8 +24,8 @@ export default function App() {
 
   // ── Map interaction state ─────────────────────────────────
   const [activeTool, setActiveTool]   = useState('none');
-  const [startNodeId, setStartNodeId] = useState(null);
-  const [endNodeId, setEndNodeId]     = useState(null);
+  const [startNode, setStartNode] = useState(null);
+  const [endNode, setEndNode]     = useState(null);
   const [placingMode, setPlacingMode] = useState('loading'); // loading|error|start|end|done
 
   // ── Clock ─────────────────────────────────────────────────
@@ -48,30 +48,44 @@ export default function App() {
   const handleNodeClick = useCallback((lat, lon) => {
     if (loadState !== 'loaded') return;
 
-    const nearest = snapToNearest(lat, lon);
-    if (!nearest) return;
+    const isObstacleTool = activeTool === 'block' || activeTool === 'flood' || activeTool === 'fire';
 
-    // Obstacle tools
-    if (activeTool === 'block' || activeTool === 'flood' || activeTool === 'fire') {
-      const id = String(nearest.id);
+    if (isObstacleTool) {
+      // Obstacles always snap to the nearest REAL graph node — no virtual node
+      // needed since obstacles are stored by node id, not injected into the graph.
+      const nearest = snapToNearest(lat, lon, 'start'); // role doesn't matter; real node resolved below
+      if (!nearest) return;
+
+      // If snap returned a virtual node (mid-edge), resolve to the closer endpoint.
+      const realNode = nearest.isVirtual
+        ? (() => {
+            const { na, nb } = nearest.hostEdge;
+            const dA = (lat - na.lat) ** 2 + (lon - na.lon) ** 2;
+            const dB = (lat - nb.lat) ** 2 + (lon - nb.lon) ** 2;
+            return dA <= dB ? na : nb;
+          })()
+        : nearest;
+
+      const id = String(realNode.id);
       const isSet =
         (activeTool === 'block' && blockedNodes.has(id)) ||
         (activeTool === 'flood' && floodNodes.has(id)) ||
         (activeTool === 'fire'  && fireNodes.has(id));
 
-      toggleObstacle(nearest.id, activeTool);
-
+      toggleObstacle(realNode.id, activeTool);
       if (isSet) {
         mapRef.current?.removeObstacleMarker(id);
       } else {
-        mapRef.current?.addObstacleMarker(id, nearest.lat, nearest.lon, activeTool);
+        mapRef.current?.addObstacleMarker(id, realNode.lat, realNode.lon, activeTool);
       }
       return;
     }
 
-    // Place START
+    // Place START — snap to exact projected position (virtual node ok)
     if (placingMode === 'start' || (placingMode === 'done' && activeTool === 'none')) {
-      setStartNodeId(String(nearest.id));
+      const nearest = snapToNearest(lat, lon, 'start');
+      if (!nearest) return;
+      setStartNode(nearest);
       mapRef.current?.placeStartMarker(nearest.lat, nearest.lon, 'Rescue Team');
       setPlacingMode('end');
       return;
@@ -79,7 +93,9 @@ export default function App() {
 
     // Place END
     if (placingMode === 'end') {
-      setEndNodeId(String(nearest.id));
+      const nearest = snapToNearest(lat, lon, 'end');
+      if (!nearest) return;
+      setEndNode(nearest);
       mapRef.current?.placeEndMarker(nearest.lat, nearest.lon, 'Hospital');
       setPlacingMode('done');
     }
@@ -88,10 +104,10 @@ export default function App() {
   // ── Run all algorithms ────────────────────────────────────
   const handleRun = useCallback(() => {
     mapRef.current?.clearPaths();
-    runAll(startNodeId, endNodeId, (algo, path) => {
+    runAll(startNode, endNode, (algo, path) => {
       mapRef.current?.drawPath(algo, path, graphNodes);
     });
-  }, [runAll, startNodeId, endNodeId, graphNodes]);
+  }, [runAll, startNode, endNode, graphNodes]);
 
   // ── Clear paths ───────────────────────────────────────────
   const handleClear = useCallback(() => {
@@ -106,8 +122,8 @@ export default function App() {
     mapRef.current?.clearObstacleMarkers();
     resetAlgo();
     resetObstacles();
-    setStartNodeId(null);
-    setEndNodeId(null);
+    setStartNode(null);
+    setEndNode(null);
     setPlacingMode('start');
   }, [resetAlgo, resetObstacles]);
 

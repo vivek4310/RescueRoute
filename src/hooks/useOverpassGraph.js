@@ -52,24 +52,27 @@ function pointToSegmentDistSq(px, py, ax, ay, bx, by) {
   };
 }
 
-// Main export used by the hook — replaces the old single-call nearestNode.
-export function snapToNearestEdge(nodeList, edges, lat, lon) {
-  // Step 1: find the nearest node as a seed (limits candidate search radius).
+// ─── Virtual node ─────────────────────────────────────────────────────────────
+// A virtual node is a synthetic graph node at the exact projected position on
+// an edge. It is NOT stored in the graph permanently — callers must inject it
+// into a shallow-copied adjacency list before running pathfinding, then discard.
+//
+// Shape: { id, lat, lon, isVirtual, hostEdge: { na, nb, weight } }
+// id is always '__start_virtual__' or '__end_virtual__' so callers can tell.
+
+export function snapToNearestEdge(nodeList, edges, lat, lon, virtualId = '__virtual__') {
+  // Step 1: seed with nearest node — guarantees a fallback for isolated nodes.
   const seed = nearestNode(nodeList, lat, lon);
   if (!seed) return null;
 
-  // Step 2: collect all nodes within CANDIDATE_RADIUS of the click.
+  // Step 2: candidate nodes within CANDIDATE_RADIUS_M of the click.
   const candidateIds = new Set();
   for (const n of nodeList) {
     if (haversine(lat, lon, n.lat, n.lon) <= CANDIDATE_RADIUS_M) {
       candidateIds.add(n.id);
     }
   }
-  // Always keep the seed so we have at least one result.
-  candidateIds.add(seed.id);
-
-  // Step 3: project the click onto every edge that has both endpoints in the
-  // candidate set, track the edge with the smallest perpendicular distance.
+  candidateIds.add(seed.id); // always include seed
 
   // Build id→node map for candidates only (tiny subset of 159k).
   const candidateMap = {};
@@ -77,7 +80,9 @@ export function snapToNearestEdge(nodeList, edges, lat, lon) {
     if (candidateIds.has(n.id)) candidateMap[n.id] = n;
   }
 
+  // Step 3: project the click onto every candidate edge, find closest.
   let bestDistSq = Infinity;
+  let bestT = 0;
   let bestEdge = null;
 
   for (const e of edges) {
@@ -86,21 +91,91 @@ export function snapToNearestEdge(nodeList, edges, lat, lon) {
 
     const { x: ax, y: ay } = toXY(na.lat, na.lon, lat, lon);
     const { x: bx, y: by } = toXY(nb.lat, nb.lon, lat, lon);
-    const { distSq } = pointToSegmentDistSq(0, 0, ax, ay, bx, by);
+    const { t, distSq } = pointToSegmentDistSq(0, 0, ax, ay, bx, by);
 
     if (distSq < bestDistSq) {
       bestDistSq = distSq;
-      bestEdge = { na, nb };
+      bestT      = t;
+      bestEdge   = { e, na, nb };
     }
   }
 
-  // Step 4: of the two endpoints of the best edge, return the one closer to
-  // the click. Falls back to seed if no edge was found (isolated node).
-  if (!bestEdge) return seed;
+  // Step 4: no edge found — fall back to seed node (isolated node case).
+  if (!bestEdge) return { ...seed, isVirtual: false };
 
-  const dA = haversine(lat, lon, bestEdge.na.lat, bestEdge.na.lon);
-  const dB = haversine(lat, lon, bestEdge.nb.lat, bestEdge.nb.lon);
-  return dA <= dB ? bestEdge.na : bestEdge.nb;
+  // Step 5: interpolate the exact projected lat/lon at parameter t.
+  const projLat = bestEdge.na.lat + bestT * (bestEdge.nb.lat - bestEdge.na.lat);
+  const projLon = bestEdge.na.lon + bestT * (bestEdge.nb.lon - bestEdge.na.lon);
+
+  // If t is essentially 0 or 1 we're right on an endpoint — just return it.
+  if (bestT < 0.01) return { ...bestEdge.na, isVirtual: false };
+  if (bestT > 0.99) return { ...bestEdge.nb, isVirtual: false };
+
+  return {
+    id:        virtualId,
+    lat:       projLat,
+    lon:       projLon,
+    isVirtual: true,
+    hostEdge:  {
+      na:     bestEdge.na,
+      nb:     bestEdge.nb,
+      weight: bestEdge.e.weight,   // total edge weight (used to split proportionally)
+      dist:   bestEdge.e.dist,
+    },
+  };
+}
+
+// ─── Virtual node injection ───────────────────────────────────────────────────
+// Call this before running any algorithm when start or end is a virtual node.
+// Returns a NEW shallow-copied adj that includes the virtual node spliced into
+// its host edge. The original graphAdj is never mutated.
+//
+// The host edge  na ↔ nb  is split into  na ↔ V  and  V ↔ nb  with weights
+// proportional to the haversine distances of each sub-segment.
+//
+// Pass the patched adj + graphNodes copy to the algorithm. Discard afterwards.
+
+export function injectVirtualNode(graphAdj, graphNodes, virtualNode) {
+  if (!virtualNode || !virtualNode.isVirtual) return { adj: graphAdj, nodes: graphNodes };
+
+  const { id, lat, lon, hostEdge } = virtualNode;
+  const { na, nb } = hostEdge;
+
+  const distToA  = haversine(lat, lon, na.lat, na.lon);
+  const distToB  = haversine(lat, lon, nb.lat, nb.lon);
+  const totalDist = distToA + distToB || 1;
+
+  // Proportional weight split (preserves road-type multiplier already baked in)
+  const wTotal   = hostEdge.weight;
+  const wToA     = wTotal * (distToA / totalDist);
+  const wToB     = wTotal * (distToB / totalDist);
+
+  // Shallow-copy only the rows we touch — everything else is shared.
+  const adj   = { ...graphAdj };
+  const nodes = { ...graphNodes };
+
+  // Add virtual node to nodes map so heuristic can look up its coords.
+  nodes[id] = { id, lat, lon };
+
+  // Virtual node connects to both endpoints (bidirectional).
+  adj[id] = [
+    { id: String(na.id), weight: wToA, dist: distToA },
+    { id: String(nb.id), weight: wToB, dist: distToB },
+  ];
+
+  // Patch na: add edge to virtual node (keep existing neighbours).
+  adj[String(na.id)] = [
+    ...(graphAdj[String(na.id)] || []),
+    { id, weight: wToA, dist: distToA },
+  ];
+
+  // Patch nb: add edge to virtual node (keep existing neighbours).
+  adj[String(nb.id)] = [
+    ...(graphAdj[String(nb.id)] || []),
+    { id, weight: wToB, dist: distToB },
+  ];
+
+  return { adj, nodes };
 }
 
 // Road type → base cost multiplier (lower = faster road)
@@ -242,8 +317,10 @@ export function useOverpassGraph() {
     setFireNodes(new Set());
   }, []);
 
-  const snapToNearest = useCallback((lat, lon) => {
-    return snapToNearestEdge(nodeList, edgesRef.current, lat, lon);
+  // role: 'start' | 'end' — determines the virtual node id injected into the graph
+  const snapToNearest = useCallback((lat, lon, role = 'start') => {
+    const virtualId = role === 'end' ? '__end_virtual__' : '__start_virtual__';
+    return snapToNearestEdge(nodeList, edgesRef.current, lat, lon, virtualId);
   }, [nodeList]);
 
   return {

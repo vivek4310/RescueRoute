@@ -3,7 +3,7 @@ import { dijkstra }    from '../algorithms/dijkstra';
 import { aStar }       from '../algorithms/aStar';
 import { bfs }         from '../algorithms/bfs';
 import { bellmanFord } from '../algorithms/bellmanFord';
-import { haversine }   from './useOverpassGraph';
+import { haversine, injectVirtualNode } from './useOverpassGraph';
 
 export const ALGORITHMS = [
   {
@@ -54,8 +54,13 @@ export function useAlgorithm(graphNodes, graphAdj, getEffectiveWeight) {
     return haversine(na.lat, na.lon, nb.lat, nb.lon);
   }, [graphNodes]);
 
-  const runAll = useCallback(async (startNodeId, endNodeId, onPathReady) => {
-    if (!startNodeId || !endNodeId) {
+  // startNode / endNode are the objects returned by snapToNearest —
+  // either a real graph node { id, lat, lon } or a virtual node
+  // { id, lat, lon, isVirtual, hostEdge }. We inject virtual nodes
+  // into temporary adj/nodes copies before running each algorithm,
+  // so the base graph is never mutated.
+  const runAll = useCallback(async (startNode, endNode, onPathReady) => {
+    if (!startNode || !endNode) {
       alert('Place both START (🚑) and END (🏥) on the map first.');
       return;
     }
@@ -64,12 +69,26 @@ export function useAlgorithm(graphNodes, graphAdj, getEffectiveWeight) {
     setAnimationProgress({});
     setIsRunning(true);
 
+    // Build the patched adj and nodes once — shared across all four algorithms.
+    let { adj: patchedAdj, nodes: patchedNodes } = injectVirtualNode(graphAdj, graphNodes, startNode);
+    ({ adj: patchedAdj, nodes: patchedNodes }    = injectVirtualNode(patchedAdj, patchedNodes, endNode));
+
+    const startId = String(startNode.id);
+    const endId   = String(endNode.id);
+
+    // Rebuild heuristic using patched nodes (includes virtual coords).
+    const patchedHeuristic = (aId, bId) => {
+      const na = patchedNodes[aId], nb = patchedNodes[bId];
+      if (!na || !nb) return 0;
+      return haversine(na.lat, na.lon, nb.lat, nb.lon);
+    };
+
     const rawResults = {};
 
     for (const algo of ALGORITHMS) {
       const fn = algoFns[algo.id];
       const t0 = performance.now();
-      const result = fn(graphAdj, startNodeId, endNodeId, getEffectiveWeight, heuristic);
+      const result = fn(patchedAdj, startId, endId, getEffectiveWeight, patchedHeuristic);
       const t1 = performance.now();
       rawResults[algo.id] = {
         ...result,
