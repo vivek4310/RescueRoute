@@ -15,12 +15,12 @@ export default function App() {
     graphNodes, graphAdj, nodeCount, edgeCount,
     loadState, errorMsg,
     blockedNodes, floodNodes, fireNodes,
-    load, snapToNearest, toggleObstacle, resetObstacles, getEffectiveWeight,
+    load, snapToNearest, snapToNearestNode, toggleObstacle, resetObstacles, getEffectiveWeight,
   } = useOverpassGraph();
 
   // ── Algorithms ────────────────────────────────────────────
   const { results, isRunning, animationProgress, runAll, reset: resetAlgo } =
-    useAlgorithm(graphNodes, graphAdj, getEffectiveWeight);
+    useAlgorithm(graphNodes, graphAdj, getEffectiveWeight, { blockedNodes, floodNodes, fireNodes });
 
   // ── Map interaction state ─────────────────────────────────
   const [activeTool, setActiveTool]   = useState('none');
@@ -51,20 +51,11 @@ export default function App() {
     const isObstacleTool = activeTool === 'block' || activeTool === 'flood' || activeTool === 'fire';
 
     if (isObstacleTool) {
-      // Obstacles always snap to the nearest REAL graph node — no virtual node
-      // needed since obstacles are stored by node id, not injected into the graph.
-      const nearest = snapToNearest(lat, lon, 'start'); // role doesn't matter; real node resolved below
-      if (!nearest) return;
-
-      // If snap returned a virtual node (mid-edge), resolve to the closer endpoint.
-      const realNode = nearest.isVirtual
-        ? (() => {
-            const { na, nb } = nearest.hostEdge;
-            const dA = (lat - na.lat) ** 2 + (lon - na.lon) ** 2;
-            const dB = (lat - nb.lat) ** 2 + (lon - nb.lon) ** 2;
-            return dA <= dB ? na : nb;
-          })()
-        : nearest;
+      // Use tight-radius snap (30 m) directly to real nodes.
+      // If the click is too far from any node, do nothing — prevents the
+      // marker from jumping to a seemingly random spot far from the click.
+      const realNode = snapToNearestNode(lat, lon);
+      if (!realNode) return;
 
       const id = String(realNode.id);
       const isSet =
@@ -99,7 +90,7 @@ export default function App() {
       mapRef.current?.placeEndMarker(nearest.lat, nearest.lon, 'Hospital');
       setPlacingMode('done');
     }
-  }, [loadState, activeTool, placingMode, snapToNearest, toggleObstacle, blockedNodes, floodNodes, fireNodes]);
+  }, [loadState, activeTool, placingMode, snapToNearest, snapToNearestNode, toggleObstacle, blockedNodes, floodNodes, fireNodes]);
 
   // ── Run all algorithms ────────────────────────────────────
   const handleRun = useCallback(() => {

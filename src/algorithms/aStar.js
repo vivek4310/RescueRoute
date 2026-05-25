@@ -3,45 +3,43 @@
  * Time:  O(E log V)
  * Space: O(V)
  *
- * Uses real haversine distance as the admissible heuristic.
- * heuristic(aId, bId) is injected from useAlgorithm so it has
- * access to graphNodes coordinates without importing them here.
+ * FIX: replaced linear scan of openSet (O(n) per step) with a MinHeap (O(log n)).
+ * gScore is now a plain Map for O(1) lookup instead of iterating the openSet.
  */
+import { MinHeap } from './minHeap';
+
 export function aStar(adj, startId, endId, getEffectiveWeight, heuristic) {
-  const gScore  = {};
+  const gScore  = new Map();
   const parent  = {};
   const visited = [];
-  const openSet = new Map();
   const closed  = new Set();
 
-  for (const id in adj) { gScore[id] = Infinity; parent[id] = null; }
-  gScore[startId] = 0;
-  openSet.set(startId, { g: 0, f: heuristic(startId, endId) });
+  for (const id in adj) { gScore.set(id, Infinity); parent[id] = null; }
+  gScore.set(startId, 0);
 
-  while (openSet.size > 0) {
-    // Pick node with lowest f score
-    let cur = null, best = Infinity;
-    for (const [id, v] of openSet) {
-      if (v.f < best) { best = v.f; cur = id; }
-    }
-    if (!cur) break;
+  const pq = new MinHeap();
+  pq.push(heuristic(startId, endId), startId);
 
-    const { g } = openSet.get(cur);
-    openSet.delete(cur);
+  while (pq.size > 0) {
+    const { value: cur } = pq.pop();
+
+    if (closed.has(cur)) continue;
     closed.add(cur);
     visited.push(cur);
 
     if (cur === endId) break;
+
+    const g = gScore.get(cur) ?? Infinity;
 
     for (const nb of (adj[cur] || [])) {
       if (closed.has(nb.id)) continue;
       const w = getEffectiveWeight(nb.id, nb.weight);
       if (w === Infinity) continue;
       const ng = g + w;
-      if (!openSet.has(nb.id) || ng < openSet.get(nb.id).g) {
+      if (ng < (gScore.get(nb.id) ?? Infinity)) {
         parent[nb.id] = cur;
-        gScore[nb.id] = ng;
-        openSet.set(nb.id, { g: ng, f: ng + heuristic(nb.id, endId) });
+        gScore.set(nb.id, ng);
+        pq.push(ng + heuristic(nb.id, endId), nb.id);
       }
     }
   }
@@ -49,7 +47,7 @@ export function aStar(adj, startId, endId, getEffectiveWeight, heuristic) {
   return {
     visited,
     path: reconstructPath(parent, startId, endId),
-    cost: gScore[endId] ?? Infinity,
+    cost: gScore.get(endId) ?? Infinity,
   };
 }
 

@@ -3,24 +3,26 @@
  * Time:  O((V + E) log V)
  * Space: O(V)
  *
- * adj: { nodeId: [{ id, weight, dist }, ...] }
- * getEffectiveWeight(nodeId, baseWeight) → actual cost (accounts for flood/fire/block)
+ * FIX: replaced pq.sort() with a real binary MinHeap.
+ * Old code sorted the entire array every iteration → O(n²log n) in practice.
+ * Now each push/pop is O(log n).
  */
+import { MinHeap } from './minHeap';
+
 export function dijkstra(adj, startId, endId, getEffectiveWeight) {
-  const dist     = {};
-  const parent   = {};
-  const visited  = [];
+  const dist      = {};
+  const parent    = {};
+  const visited   = [];
   const processed = new Set();
 
   for (const id in adj) { dist[id] = Infinity; parent[id] = null; }
   dist[startId] = 0;
 
-  // Simple min-heap via sorted array  (good enough for ~5k nodes)
-  const pq = [[0, startId]];
+  const pq = new MinHeap();
+  pq.push(0, startId);
 
-  while (pq.length > 0) {
-    pq.sort((a, b) => a[0] - b[0]);
-    const [cost, u] = pq.shift();
+  while (pq.size > 0) {
+    const { priority: cost, value: u } = pq.pop();
 
     if (processed.has(u)) continue;
     processed.add(u);
@@ -35,7 +37,7 @@ export function dijkstra(adj, startId, endId, getEffectiveWeight) {
       if (newCost < dist[nb.id]) {
         dist[nb.id] = newCost;
         parent[nb.id] = u;
-        pq.push([newCost, nb.id]);
+        pq.push(newCost, nb.id);
       }
     }
   }
