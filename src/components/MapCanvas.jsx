@@ -43,6 +43,8 @@ const MapCanvas = forwardRef(function MapCanvas(
       const map = L.map(mapRef.current, {
         center: [22.5726, 88.3639],
         zoom: 14,
+        minZoom: 12,
+        maxZoom: 17,
         zoomControl: true,
         scrollWheelZoom: true,
         attributionControl: true,
