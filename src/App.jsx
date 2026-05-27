@@ -15,17 +15,17 @@ export default function App() {
     graphNodes, graphAdj, nodeCount, edgeCount,
     loadState, errorMsg,
     blockedNodes, floodNodes, fireNodes,
-    load, snapToNearest, toggleObstacle, resetObstacles, getEffectiveWeight,
+    load, snapToNearest, snapToNearestNode, toggleObstacle, resetObstacles, getEffectiveWeight,
   } = useOverpassGraph();
 
   // ── Algorithms ────────────────────────────────────────────
   const { results, isRunning, animationProgress, runAll, reset: resetAlgo } =
-    useAlgorithm(graphNodes, graphAdj, getEffectiveWeight);
+    useAlgorithm(graphNodes, graphAdj, getEffectiveWeight, { blockedNodes, floodNodes, fireNodes });
 
   // ── Map interaction state ─────────────────────────────────
   const [activeTool, setActiveTool]   = useState('none');
-  const [startNodeId, setStartNodeId] = useState(null);
-  const [endNodeId, setEndNodeId]     = useState(null);
+  const [startNode, setStartNode] = useState(null);
+  const [endNode, setEndNode]     = useState(null);
   const [placingMode, setPlacingMode] = useState('loading'); // loading|error|start|end|done
   const [highlightedAlgo, setHighlightedAlgo] = useState(null);
   // ── Clock ─────────────────────────────────────────────────
@@ -48,30 +48,35 @@ export default function App() {
   const handleNodeClick = useCallback((lat, lon) => {
     if (loadState !== 'loaded') return;
 
-    const nearest = snapToNearest(lat, lon);
-    if (!nearest) return;
+    const isObstacleTool = activeTool === 'block' || activeTool === 'flood' || activeTool === 'fire';
 
-    // Obstacle tools
-    if (activeTool === 'block' || activeTool === 'flood' || activeTool === 'fire') {
-      const id = String(nearest.id);
+    if (isObstacleTool) {
+      // Use tight-radius snap (30 m) directly to real nodes.
+      // If the click is too far from any node, do nothing — prevents the
+      // marker from jumping to a seemingly random spot far from the click.
+      const realNode = snapToNearestNode(lat, lon);
+      if (!realNode) return;
+
+      const id = String(realNode.id);
       const isSet =
         (activeTool === 'block' && blockedNodes.has(id)) ||
         (activeTool === 'flood' && floodNodes.has(id)) ||
         (activeTool === 'fire'  && fireNodes.has(id));
 
-      toggleObstacle(nearest.id, activeTool);
-
+      toggleObstacle(realNode.id, activeTool);
       if (isSet) {
         mapRef.current?.removeObstacleMarker(id);
       } else {
-        mapRef.current?.addObstacleMarker(id, nearest.lat, nearest.lon, activeTool);
+        mapRef.current?.addObstacleMarker(id, realNode.lat, realNode.lon, activeTool);
       }
       return;
     }
 
-    // Place START
+    // Place START — snap to exact projected position (virtual node ok)
     if (placingMode === 'start' || (placingMode === 'done' && activeTool === 'none')) {
-      setStartNodeId(String(nearest.id));
+      const nearest = snapToNearest(lat, lon, 'start');
+      if (!nearest) return;
+      setStartNode(nearest);
       mapRef.current?.placeStartMarker(nearest.lat, nearest.lon, 'Rescue Team');
       setPlacingMode('end');
       return;
@@ -79,19 +84,21 @@ export default function App() {
 
     // Place END
     if (placingMode === 'end') {
-      setEndNodeId(String(nearest.id));
+      const nearest = snapToNearest(lat, lon, 'end');
+      if (!nearest) return;
+      setEndNode(nearest);
       mapRef.current?.placeEndMarker(nearest.lat, nearest.lon, 'Hospital');
       setPlacingMode('done');
     }
-  }, [loadState, activeTool, placingMode, snapToNearest, toggleObstacle, blockedNodes, floodNodes, fireNodes]);
+  }, [loadState, activeTool, placingMode, snapToNearest, snapToNearestNode, toggleObstacle, blockedNodes, floodNodes, fireNodes]);
 
   // ── Run all algorithms ────────────────────────────────────
   const handleRun = useCallback(() => {
     mapRef.current?.clearPaths();
-    runAll(startNodeId, endNodeId, (algo, path) => {
+    runAll(startNode, endNode, (algo, path) => {
       mapRef.current?.drawPath(algo, path, graphNodes);
     });
-  }, [runAll, startNodeId, endNodeId, graphNodes]);
+  }, [runAll, startNode, endNode, graphNodes]);
 
   // ── Clear paths ───────────────────────────────────────────
   const handleClear = useCallback(() => {
@@ -106,8 +113,8 @@ export default function App() {
     mapRef.current?.clearObstacleMarkers();
     resetAlgo();
     resetObstacles();
-    setStartNodeId(null);
-    setEndNodeId(null);
+    setStartNode(null);
+    setEndNode(null);
     setPlacingMode('start');
   }, [resetAlgo, resetObstacles]);
 
