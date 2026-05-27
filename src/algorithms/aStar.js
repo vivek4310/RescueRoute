@@ -8,6 +8,8 @@
  * access to graphNodes coordinates without importing them here.
  */
 export function aStar(adj, startId, endId, getEffectiveWeight, heuristic) {
+  startId = String(startId);
+  endId = String(endId);
   const gScore  = {};
   const parent  = {};
   const visited = [];
@@ -54,15 +56,14 @@ export function aStar(adj, startId, endId, getEffectiveWeight, heuristic) {
 }
 
 function reconstructPath(parent, startId, endId) {
-  if (parent[endId] === undefined && endId !== startId) return [];
   const path = [];
   let cur = endId;
-  const seen = new Set();
-  while (cur !== null && cur !== undefined) {
-    if (seen.has(cur)) break;
-    seen.add(cur);
+  while (cur !== null) {
     path.unshift(cur);
+    if (cur === startId) {
+      return path;
+    }
     cur = parent[cur];
   }
-  return path[0] === startId ? path : [];
+  return [];
 }

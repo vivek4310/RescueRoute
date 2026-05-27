@@ -8,6 +8,8 @@
  * Capped at 200 iterations for UI performance on the Kolkata graph.
  */
 export function bellmanFord(adj, startId, endId, getEffectiveWeight) {
+  startId = String(startId);
+  endId = String(endId);
   const dist    = {};
   const parent  = {};
   const visited = [];

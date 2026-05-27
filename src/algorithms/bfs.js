@@ -8,6 +8,8 @@
  * consider cost, demonstrating the trade-off vs Dijkstra/A*.
  */
 export function bfs(adj, startId, endId, getEffectiveWeight) {
+  startId = String(startId);
+  endId = String(endId);
   const parent  = { [startId]: null };
   const visited = [];
   const queue   = [startId];

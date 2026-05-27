@@ -7,6 +7,8 @@
  * getEffectiveWeight(nodeId, baseWeight) → actual cost (accounts for flood/fire/block)
  */
 export function dijkstra(adj, startId, endId, getEffectiveWeight) {
+  startId = String(startId);
+  endId = String(endId);
   const dist     = {};
   const parent   = {};
   const visited  = [];

@@ -1,4 +1,4 @@
-export default function AlgoRacePanel({ ALGORITHMS, results, animationProgress, isRunning }) {
+export default function AlgoRacePanel({ ALGORITHMS, results, animationProgress, isRunning,highlightedAlgo,setHighlightedAlgo }) {
   return (
     <div style={{
       width: '260px',
@@ -31,13 +31,32 @@ export default function AlgoRacePanel({ ALGORITHMS, results, animationProgress, 
         const found = result?.found;
 
         return (
-          <div key={algo.id} style={{
-            background: 'rgba(255,255,255,0.03)',
-            border: `1px solid ${hasResult ? algo.color + '40' : 'rgba(255,255,255,0.06)'}`,
-            borderRadius: '8px',
-            padding: '10px',
-            transition: 'border-color 0.3s',
-          }}>
+          <div
+            key={algo.id}
+            onClick={() =>
+              setHighlightedAlgo(prev =>
+                prev === algo.id ? null : algo.id
+              )
+            }
+            style={{
+              cursor: 'pointer',
+              background:
+                highlightedAlgo === algo.id
+                  ? algo.color + '15'
+                  : 'rgba(255,255,255,0.03)',
+              border:
+                highlightedAlgo === algo.id
+                  ? `1px solid ${algo.color}`
+                  : `1px solid ${
+                      hasResult
+                        ? algo.color + '40'
+                        : 'rgba(255,255,255,0.06)'
+                    }`,
+              borderRadius: '8px',
+              padding: '10px',
+              transition: 'all 0.25s ease',
+            }}
+          >
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>

@@ -56,7 +56,14 @@ export function buildGraph(data) {
   const ways = [];
 
   for (const el of data.elements) {
-    if (el.type === 'node') nodes[el.id] = { id: el.id, lat: el.lat, lon: el.lon };
+    if (el.type === 'node') {
+      const id = String(el.id);
+      nodes[id] = {
+        id,
+        lat: el.lat,
+        lon: el.lon
+      };
+  }
     if (el.type === 'way' && el.nodes) ways.push(el);
   }
 
@@ -67,7 +74,8 @@ export function buildGraph(data) {
     const oneWay = way.tags && (way.tags.oneway === 'yes' || way.tags.oneway === '1');
 
     for (let i = 0; i < way.nodes.length - 1; i++) {
-      const aId = way.nodes[i], bId = way.nodes[i + 1];
+      const aId = String(way.nodes[i]);
+      const bId = String(way.nodes[i + 1]);
       const na = nodes[aId], nb = nodes[bId];
       if (!na || !nb) continue;
       const dist = haversine(na.lat, na.lon, nb.lat, nb.lon);

@@ -27,7 +27,7 @@ export default function App() {
   const [startNodeId, setStartNodeId] = useState(null);
   const [endNodeId, setEndNodeId]     = useState(null);
   const [placingMode, setPlacingMode] = useState('loading'); // loading|error|start|end|done
-
+  const [highlightedAlgo, setHighlightedAlgo] = useState(null);
   // ── Clock ─────────────────────────────────────────────────
   const [time, setTime] = useState(new Date());
   useEffect(() => {
@@ -168,6 +168,7 @@ export default function App() {
             nodeCount={nodeCount}
             edgeCount={edgeCount}
             loadState={loadState}
+            highlightedAlgo={highlightedAlgo}
           />
           <ComplexityPanel results={results} ALGORITHMS={ALGORITHMS} />
           <ScenarioToolbar
@@ -187,6 +188,9 @@ export default function App() {
           results={results}
           animationProgress={animationProgress}
           isRunning={isRunning}
+
+          highlightedAlgo={highlightedAlgo}
+          setHighlightedAlgo={setHighlightedAlgo}
         />
       </div>
 

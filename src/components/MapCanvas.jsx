@@ -22,19 +22,55 @@ const ALGO_STYLE = {
  *   mapRef.current.clearObstacleMarkers()
  */
 const MapCanvas = forwardRef(function MapCanvas(
-  { graphNodes, snapToNearest, onNodeClick, placingMode, nodeCount, edgeCount, loadState },
+  { graphNodes, snapToNearest, onNodeClick, placingMode, nodeCount, edgeCount, loadState,highlightedAlgo },
   ref
 ) {
   const mapRef          = useRef(null);
   const mapInstanceRef  = useRef(null);
   const startMarkerRef  = useRef(null);
   const endMarkerRef    = useRef(null);
-  const polylineRefs    = useRef([]);
+  const polylineRefs    = useRef({});
   const obstacleMarkers = useRef({});
   // Always holds the latest onNodeClick without re-registering the Leaflet listener
   const onNodeClickRef  = useRef(onNodeClick);
   useEffect(() => { onNodeClickRef.current = onNodeClick; }, [onNodeClick]);
 
+  useEffect(() => {
+  onNodeClickRef.current = onNodeClick;
+}, [onNodeClick]);
+
+useEffect(() => {
+
+  Object.entries(polylineRefs.current)
+    .forEach(([algoId, polyline]) => {
+
+      const baseStyle =
+        ALGO_STYLE[algoId] || {
+          weight: 4,
+          opacity: 0.85
+        };
+
+      polyline.setStyle({
+
+        weight:
+          highlightedAlgo === algoId
+            ? 8
+            : baseStyle.weight,
+
+        opacity:
+          highlightedAlgo === null
+            ? baseStyle.opacity
+            : highlightedAlgo === algoId
+            ? 1
+            : 0.12
+      });
+
+      if (highlightedAlgo === algoId) {
+        polyline.bringToFront();
+      }
+    });
+
+}, [highlightedAlgo]);
   // ── Init Leaflet ──────────────────────────────────────────
   useEffect(() => {
     if (mapInstanceRef.current) return;
@@ -80,7 +116,6 @@ const MapCanvas = forwardRef(function MapCanvas(
         }).addTo(mapInstanceRef.current).bindTooltip('🚑 ' + label, { permanent: false });
       });
     },
-
     placeEndMarker(lat, lon, label) {
       import('leaflet').then(L => {
         if (endMarkerRef.current) mapInstanceRef.current.removeLayer(endMarkerRef.current);
@@ -90,7 +125,6 @@ const MapCanvas = forwardRef(function MapCanvas(
         }).addTo(mapInstanceRef.current).bindTooltip('🏥 ' + label, { permanent: false });
       });
     },
-
     clearMarkers() {
       if (startMarkerRef.current) {
         mapInstanceRef.current?.removeLayer(startMarkerRef.current);
@@ -101,25 +135,52 @@ const MapCanvas = forwardRef(function MapCanvas(
         endMarkerRef.current = null;
       }
     },
-
     drawPath(algo, nodeIds, nodes) {
-      if (!nodeIds || nodeIds.length < 2) return;
-      const latlngs = nodeIds
-        .map(id => nodes[id])
-        .filter(Boolean)
-        .map(n => [n.lat, n.lon]);
-      if (latlngs.length < 2) return;
-
-      import('leaflet').then(L => {
-        const style = ALGO_STYLE[algo.id] || { color: algo.color, weight: 4, opacity: 0.85 };
-        const pl = L.polyline(latlngs, style).addTo(mapInstanceRef.current);
-        polylineRefs.current.push(pl);
-      });
-    },
+  if (!nodeIds || nodeIds.length < 2) return;
+  const latlngs = nodeIds
+    .map(id => nodes[id])
+    .filter(Boolean)
+    .map(n => [n.lat, n.lon]);
+  if (latlngs.length < 2) return;
+  import('leaflet').then(L => {
+    const isHighlighted =
+      highlightedAlgo === null ||
+      highlightedAlgo === algo.id;
+    const baseStyle =
+      ALGO_STYLE[algo.id] || {
+        color: algo.color,
+        weight: 4,
+        opacity: 0.85
+      };
+    const style = {
+      ...baseStyle,
+      weight:
+        highlightedAlgo === algo.id
+          ? 8
+          : baseStyle.weight,
+      opacity:
+        highlightedAlgo === null
+          ? baseStyle.opacity
+          : highlightedAlgo === algo.id
+          ? 1
+          : 0.12
+    };
+    const pl = L.polyline(latlngs, style)
+      .addTo(mapInstanceRef.current);
+    if (highlightedAlgo === algo.id) {
+      pl.bringToFront();
+    }
+    polylineRefs.current[algo.id] = pl;
+  });
+},
 
     clearPaths() {
-      polylineRefs.current.forEach(pl => mapInstanceRef.current?.removeLayer(pl));
-      polylineRefs.current = [];
+      Object.values(polylineRefs.current)
+        .forEach(pl =>
+          mapInstanceRef.current?.removeLayer(pl)
+        );
+
+      polylineRefs.current = {};
     },
 
     addObstacleMarker(nodeId, lat, lon, tool) {
